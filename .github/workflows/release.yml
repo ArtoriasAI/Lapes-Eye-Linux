@@ -10,9 +10,6 @@ jobs:
   build-linux:
     name: Linux AppImage
     runs-on: ubuntu-22.04
-    defaults:
-      run:
-        working-directory: "Lapes Eye"
 
     steps:
       - name: Checkout
