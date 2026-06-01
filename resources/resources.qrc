@@ -1,0 +1,11 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file alias="lapes-eye-256.png">icons/lapes-eye-256.png</file>
+        <file alias="lapes-eye-128.png">icons/lapes-eye-128.png</file>
+        <file alias="lapes-eye-64.png">icons/lapes-eye-64.png</file>
+        <file alias="lapes-eye-48.png">icons/lapes-eye-48.png</file>
+        <file alias="lapes-eye-32.png">icons/lapes-eye-32.png</file>
+        <file alias="lapes-eye-22.png">icons/lapes-eye-22.png</file>
+        <file alias="lapes-eye-16.png">icons/lapes-eye-16.png</file>
+    </qresource>
+</RCC>

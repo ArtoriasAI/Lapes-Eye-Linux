@@ -1,0 +1,12 @@
+#!/usr/bin/env xdg-open
+[Desktop Entry]
+Name=Lape's Eye
+GenericName=Media Browser
+Comment=Przeglądarka mediów dla Lape Photo Editor
+Exec=lapes-eye %f
+Icon=lapes-eye
+Type=Application
+Categories=Graphics;Photography;
+MimeType=image/jpeg;image/png;image/tiff;image/webp;image/x-canon-cr2;image/x-nikon-nef;image/x-raw;
+StartupNotify=true
+StartupWMClass=lapes-eye
