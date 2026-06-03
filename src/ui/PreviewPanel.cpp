@@ -1,4 +1,5 @@
 #include "LapesEye/ui/PreviewPanel.h"
+#include "LapesEye/core/ColorManagement.h"
 #include "LapesEye/core/MetaStore.h"
 #include <QTransform>
 #include "LapesEye/core/FileScanner.h"
@@ -280,6 +281,9 @@ void PreviewPanel::load(const QString& path) {
         }
 
         if (img.isNull()) return;
+
+        // Zarządzanie kolorem — konwersja profilu ICC
+        img = apply_color_mode(img);
 
         // Zastosuj rotation z metadanych .leye
         int rotation = MetaStore::load(path).rotation;

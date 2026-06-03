@@ -400,18 +400,57 @@ void MainWindow::setup_tabs() {
         QTabBar::tab:hover    { background: #333; color: #ddd; }
     )");
 
-    auto* new_tab_btn = new QToolButton(m_tabs);
+    // Przycisk + umieszczony zaraz za ostatnią zakładką (nie w rogu).
+    // Rodzic = tabBar(), repozycjonowany przy każdej zmianie zakładek.
+    auto* bar = m_tabs->tabBar();
+    auto* new_tab_btn = new QToolButton(bar);
     new_tab_btn->setText("+");
     new_tab_btn->setToolTip("Nowa zakładka (Ctrl+T)");
     new_tab_btn->setAutoRaise(true);
-    new_tab_btn->setFixedSize(24, 24);
-    new_tab_btn->setFocusPolicy(Qt::NoFocus);  // nie kradnie focusu od siatki
+    new_tab_btn->setFixedSize(28, 28);
+    new_tab_btn->setFocusPolicy(Qt::NoFocus);
     new_tab_btn->setStyleSheet(
-        "QToolButton { background: transparent; color: #aaa; font-size: 16px; "
-        "border: none; border-radius: 3px; }"
-        "QToolButton:hover { background: #333; color: #fff; }");
-    m_tabs->setCornerWidget(new_tab_btn, Qt::TopLeftCorner);
-    QObject::connect(new_tab_btn, &QToolButton::clicked, this, &MainWindow::action_new_tab);
+        "QToolButton { background: transparent; color: #888; font-size: 18px; "
+        "border: none; border-radius: 3px; padding-bottom: 2px; }"
+        "QToolButton:hover { background: #383838; color: #fff; }");
+
+    // Lambda repozycjonująca przycisk za ostatnią zakładką
+    auto reposition_btn = [bar, new_tab_btn]() {
+        int n = bar->count();
+        if (n == 0) {
+            new_tab_btn->move(2, (bar->height() - 28) / 2);
+        } else {
+            QRect last = bar->tabRect(n - 1);
+            int x = last.right() + 2;
+            int y = (bar->height() - 28) / 2;
+            new_tab_btn->move(x, y);
+        }
+        new_tab_btn->raise();
+    };
+
+    // Repozycjonuj przy każdej zmianie zakładek
+    QObject::connect(m_tabs, &QTabWidget::currentChanged,
+                     this, [reposition_btn](int) { reposition_btn(); });
+    // Repozycjonuj też gdy pasek się resize-uje
+    // EventFilter na tabBar — repozycjonuj przy resize i LayoutRequest
+    struct TabBarFilter : public QObject {
+        std::function<void()> fn;
+        TabBarFilter(QObject* parent, std::function<void()> f)
+            : QObject(parent), fn(std::move(f)) {}
+        bool eventFilter(QObject*, QEvent* e) override {
+            if (e->type() == QEvent::Resize ||
+                e->type() == QEvent::LayoutRequest)
+                fn();
+            return false;
+        }
+    };
+    bar->installEventFilter(new TabBarFilter(bar, reposition_btn));
+    QTimer::singleShot(0, this, [reposition_btn]() { reposition_btn(); });
+
+    QObject::connect(new_tab_btn, &QToolButton::clicked, this, [this, reposition_btn]() {
+        action_new_tab();
+        QTimer::singleShot(50, this, [reposition_btn]() { reposition_btn(); });
+    });
 
     QObject::connect(m_tabs, &QTabWidget::currentChanged,
                      this, &MainWindow::on_tab_changed);
@@ -856,6 +895,13 @@ void MainWindow::open_folder_in_new_window(const QString& path) {
     auto* w = new MainWindow();
     w->show();
     if (!path.isEmpty()) w->open_folder(path);
+}
+
+void MainWindow::select_file(const QString& path) {
+    auto* g = current_grid();
+    if (!g) return;
+    // Zaznacz plik w siatce (scroll_to jest wbudowany w select_path)
+    g->select_path(path);
 }
 
 void MainWindow::on_folder_selected(const QString& path_ref) {

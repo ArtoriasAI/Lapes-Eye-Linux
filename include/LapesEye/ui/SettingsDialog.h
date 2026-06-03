@@ -26,6 +26,13 @@ public:
     static QString external_editor_args();  // np. "--as-layer" dla Photoshopa
     static bool    external_editor_as_layer();  // true = otwórz jako warstwę w PS
 
+    // Zarządzanie kolorem
+    // 0 = Brak (surowe RGB — szybko, może nie zgadzać się z Bridge)
+    // 1 = sRGB (konwertuj profil ICC → sRGB — zalecane, zgodne z Bridge)
+    // 2 = Monitor (konwertuj profil ICC → profil monitora — najdokładniejsze)
+    enum class ColorMode { None = 0, ToSRGB = 1, ToMonitor = 2 };
+    static ColorMode color_mode();
+
 signals:
     void cache_clear_requested();
 
@@ -55,6 +62,10 @@ private:
     QLineEdit*   m_editor_args        = nullptr;
     QCheckBox*   m_editor_as_layer    = nullptr;
     QPushButton* m_editor_browse      = nullptr;
+
+    // Zarządzanie kolorem
+    QComboBox*   m_color_mode         = nullptr;
 };
+
 
 } // namespace LapesEye

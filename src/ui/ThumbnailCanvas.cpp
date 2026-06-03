@@ -1,6 +1,7 @@
 #include "LapesEye/ui/ThumbnailCanvas.h"
 #if LEYE_HAS_GL
 #  include <QOpenGLContext>
+#  include <QOpenGLPaintDevice>
 #  include <cmath>
 #endif
 #include "LapesEye/core/PerfTimer.h"
@@ -108,7 +109,10 @@ void ThumbnailCanvas::set_drag_active(bool active) {
 void ThumbnailCanvas::set_pixmap(const QString& path, const QPixmap& pix) {
     if (!pix.isNull()) m_pixmap_store[path] = pix;
 #if LEYE_HAS_GL
-    if (m_gpu.contains(path)) m_gpu[path].thumb_dirty = true;
+    if (m_gpu.contains(path)) {
+        m_gpu[path].thumb_dirty   = true;
+        m_gpu[path].overlay_dirty = true;  // ikona folderu zależy od thumb.isNull()
+    }
 #endif
     for (int i = 0; i < m_items.size(); ++i) {
         if (m_items[i].file.path == path) {
@@ -122,7 +126,10 @@ void ThumbnailCanvas::set_pixmap(const QString& path, const QPixmap& pix) {
 void ThumbnailCanvas::set_pixmap_no_update(const QString& path, const QPixmap& pix) {
     if (!pix.isNull()) m_pixmap_store[path] = pix;
 #if LEYE_HAS_GL
-    if (m_gpu.contains(path)) m_gpu[path].thumb_dirty = true;
+    if (m_gpu.contains(path)) {
+        m_gpu[path].thumb_dirty   = true;
+        m_gpu[path].overlay_dirty = true;  // ikona folderu zależy od thumb.isNull()
+    }
 #endif
     for (int i = 0; i < m_items.size(); ++i)
         if (m_items[i].file.path == path) { m_items[i].thumb = pix; return; }
@@ -237,40 +244,48 @@ void ThumbnailCanvas::paintEvent(QPaintEvent* e) {
         const_cast<ThumbnailCanvas*>(this)->gl_init();
     }
     if (m_gl_ok && m_gl_ctx && m_gl_surf) {
-        // Renderuj do FBO (własny, nie Qt-managed), skopiuj do widget przez QPainter
+        const QRect clip = e->rect();
+        const int vw = clip.width(), vh = clip.height();
+
         m_gl_ctx->makeCurrent(m_gl_surf);
-        // FBO o rozmiarze viewport (nie całego wirtualnego canvasu)
-        QOpenGLFramebufferObjectFormat fboFmt;
-        fboFmt.setSamples(0);
-        fboFmt.setAttachment(QOpenGLFramebufferObject::NoAttachment);
-        QRect clip = e->rect();
-        QOpenGLFramebufferObject fbo(clip.width(), clip.height(), fboFmt);
-        if (fbo.isValid()) {
-            fbo.bind();
-            // Ustaw projekcję dla widocznego fragmentu
+        auto* f = gl();
+        if (!f) { m_gl_ctx->doneCurrent(); goto fallback; }
+
+        // ── Cache FBO — alokuj raz, reuse przy każdej klatce ──────────────
+        // Alokacja FBO kosztuje ~3ms — robimy to tylko gdy rozmiar się zmienia
+        if (!m_gl_fbo || m_fbo_size != QSize(vw, vh)) {
+            delete m_gl_fbo;
+            QOpenGLFramebufferObjectFormat fmt;
+            fmt.setSamples(0);
+            fmt.setAttachment(QOpenGLFramebufferObject::NoAttachment);
+            m_gl_fbo  = new QOpenGLFramebufferObject(vw, vh, fmt);
+            m_fbo_size = QSize(vw, vh);
+        }
+
+        if (m_gl_fbo && m_gl_fbo->isValid()) {
+            m_gl_fbo->bind();
             m_proj.setToIdentity();
-            // ortho: (left, right, bottom, top) — żeby Y rósł w dół jak Qt
-            // bottom > top = Y rośnie do góry (OpenGL domyślnie) — ŹLE
-            // top > bottom = Y rośnie do dołu (Qt układ) — DOBRZE
-            m_proj.ortho(clip.left(), clip.right(), clip.top() + clip.height(), clip.top(), -1.f, 1.f);
-            auto* f = gl();
-            if (f) {
-                f->glViewport(0, 0, clip.width(), clip.height());
-                f->glClearColor(0x1e/255.f, 0x1e/255.f, 0x1e/255.f, 1.f);
-                f->glClear(GL_COLOR_BUFFER_BIT);
-                gl_paint_region(f, clip);
-            }
-            fbo.release();
-            // Skopiuj wynik FBO do widget przez QPainter
-            // toImage(true) = Qt flipuje oś Y z GL (dół→góra) na Qt (góra→dół)
-            QImage img = fbo.toImage(true);
+            m_proj.ortho(clip.left(), clip.right(), clip.top()+vh, clip.top(), -1.f, 1.f);
+            f->glViewport(0, 0, vw, vh);
+            f->glClearColor(0x1e/255.f, 0x1e/255.f, 0x1e/255.f, 1.f);
+            f->glClear(GL_COLOR_BUFFER_BIT);
+            gl_paint_region(f, clip);
+            m_gl_fbo->release();
+
+            // ── Blit FBO → widget przez QPainter ─────────────────────────
+            // toImage kosztuje ~2ms — zastąp przez drawImage z texture ID
+            // Na razie używamy toImage ale z BGRA (szybszy format na x86)
+            QImage img = m_gl_fbo->toImage(true);
             m_gl_ctx->doneCurrent();
-            QPainter p(this);
-            p.drawImage(clip.topLeft(), img);
-            return;
+            if (!img.isNull()) {
+                QPainter p(this);
+                p.drawImage(clip.topLeft(), img);
+                return;
+            }
         }
         m_gl_ctx->doneCurrent();
     }
+    fallback:;
 #endif
     QPainter p(this);
     QRect clip = e->rect();
@@ -610,6 +625,7 @@ ThumbnailCanvas::~ThumbnailCanvas() {
 #if LEYE_HAS_GL
     if (m_gl_ctx && m_gl_surf) {
         m_gl_ctx->makeCurrent(m_gl_surf);
+        delete m_gl_fbo; m_gl_fbo = nullptr;
         gpu_delete_all();
         if (auto* f = gl()) {
             if (m_vao) { f->glDeleteVertexArrays(1, &m_vao); m_vao = 0; }
@@ -772,6 +788,8 @@ void ThumbnailCanvas::gpu_upload_thumb(GpuEntry& e, const QPixmap& pix) {
 
 void ThumbnailCanvas::gpu_render_overlay(const QString& /*path*/, GpuEntry& e,
                                           int idx, int cw, int ch) {
+    // Context musi być aktywny gdy wywołujemy tę funkcję
+    // Jest wywoływana z gl_draw_item → paintGL → paintEvent gdzie m_gl_ctx jest aktywny
     QImage img(cw, ch, QImage::Format_RGBA8888);
     img.fill(Qt::transparent);
     const auto& item = m_items[idx];
@@ -791,8 +809,16 @@ void ThumbnailCanvas::gpu_render_overlay(const QString& /*path*/, GpuEntry& e,
     // Cut overlay
     if (cut) { p.setPen(Qt::NoPen); p.setBrush(QColor(0,0,0,100));
                p.drawRoundedRect(QRectF(0,0,cw,ch),6,6); }
+    // Ikona folderu gdy brak miniatury
+    if (item.file.is_dir && item.thumb.isNull()) {
+        QFont ff = p.font();
+        ff.setPixelSize(qMin(qMin(ir.width(), ir.height()) * 2/3, 72));
+        p.setFont(ff);
+        p.setPen(QColor(0xF0, 0xC0, 0x20));
+        p.drawText(ir, Qt::AlignCenter, "📁");  // 📁
+    }
     // Badge
-    if (item.file.is_raw || item.file.is_psd) {
+    if (!item.file.is_dir && (item.file.is_raw || item.file.is_psd)) {
         QString txt = item.file.is_raw ? "RAW" : "PSD";
         QColor col  = item.file.is_raw ? QColor(0xE5,0x89,0x20) : QColor(0x20,0x6E,0xE5);
         QFont bf = p.font(); bf.setPixelSize(9); bf.setBold(true); p.setFont(bf);
@@ -861,7 +887,7 @@ void ThumbnailCanvas::gl_draw_quad_color(GL45* f,
     m_prog->setUniformValue(m_u_use_tex, 0.f);
     m_prog->setUniformValue(m_u_color,   QVector4D(r,g,b,a));
     m_prog->setUniformValue(m_u_alpha,   1.f);
-    f->glDrawArrays(GL_TRIANGLES,0,6);
+    f->glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
 void ThumbnailCanvas::gl_draw_quad_tex(GL45* f,
@@ -870,10 +896,10 @@ void ThumbnailCanvas::gl_draw_quad_tex(GL45* f,
     m_prog->setUniformValue(m_u_mvp,     m_proj*m);
     m_prog->setUniformValue(m_u_use_tex, 1.f);
     m_prog->setUniformValue(m_u_alpha,   alpha);
-    m_prog->setUniformValue("u_tex",     0);
-    f->glBindTextureUnit(0, tex);  // DSA: bez glActiveTexture + glBindTexture
-    f->glDrawArrays(GL_TRIANGLES,0,6);
-    f->glBindTextureUnit(0,0);
+    m_prog->setUniformValue("u_tex", 0);
+    f->glBindTextureUnit(0, tex);
+    f->glDrawArrays(GL_TRIANGLES, 0, 6);
+    f->glBindTextureUnit(0, 0);
 }
 
 void ThumbnailCanvas::gl_draw_item(GL45* f, int idx) {
@@ -911,7 +937,7 @@ void ThumbnailCanvas::gl_draw_item(GL45* f, int idx) {
         }
     }
 
-    // Overlay
+    // Overlay — renderuj zawsze gdy dirty (hover, zaznaczenie, rozmiar)
     auto& e=m_gpu[item.file.path];
     int cw=r.width(), ch=r.height();
     if (e.overlay_dirty||!e.overlay_id||e.ov_w!=cw||e.ov_h!=ch)
@@ -942,6 +968,7 @@ void ThumbnailCanvas::gl_paint_region(GL45* f, const QRect& clip) {
 
     m_prog->bind();
     f->glBindVertexArray(m_vao);
+
 
     for (int row=first_r; row<=last_r; ++row)
         for (int col=0; col<c; ++col) {

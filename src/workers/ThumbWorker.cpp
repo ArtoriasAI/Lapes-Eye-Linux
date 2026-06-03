@@ -1,5 +1,7 @@
 #include "LapesEye/workers/ThumbWorker.h"
 #include "LapesEye/core/ThumbCache.h"
+#include "LapesEye/core/ColorManagement.h"
+#include <QColorSpace>
 #include "LapesEye/core/FileScanner.h"
 
 #include <QThreadPool>
@@ -130,6 +132,7 @@ QImage ThumbJob::generate_raw(const QString& path, int size, bool full_quality) 
             reader.setAutoTransform(true);
             QImage img = reader.read();
             if (!img.isNull()) {
+                img = apply_color_mode(std::move(img));
                 Qt::TransformationMode mode = full_quality
                     ? Qt::SmoothTransformation : Qt::FastTransformation;
                 return img.scaled(size, size, Qt::KeepAspectRatio, mode);
@@ -155,6 +158,8 @@ QImage ThumbJob::generate_raw(const QString& path, int size, bool full_quality) 
     memcpy(result.bits(), img_data->data,
            static_cast<size_t>(img_data->width) * img_data->height * 3);
     LibRaw::dcraw_clear_mem(img_data);
+    result.setColorSpace(QColorSpace(QColorSpace::SRgb));
+    result = apply_color_mode(std::move(result));
 
     return result.scaled(size, size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
 }
@@ -179,56 +184,11 @@ ThumbWorker::~ThumbWorker() {
 void ThumbWorker::request(const QString& path, int priority) {
     if (m_pending_fast.contains(path)) return;
 
-    // Obsługa miniatur folderów — kolaż pierwszych 4 zdjęć
+    // Foldery: zawsze pokazuj ikonę 📁 (canvas rysuje gdy thumb.isNull())
+    // Nie generuj kolażu — ikona jest szybsza i bardziej czytelna
     if (QFileInfo(path).isDir()) {
-        QString cache_key = path + "@dir@" + QString::number(m_size);
-        QPixmap ram_pix;
-        if (QPixmapCache::find(cache_key, &ram_pix)) {
-            emit thumb_ready(path, ram_pix, ThumbQuality::Full);
-            return;
-        }
-        m_pending_fast.insert(path);
-        int sz = m_size;
-        auto fut = QtConcurrent::run([this, path, sz, cache_key]() {
-            QStringList images;
-            QDir dir(path);
-            const QStringList filters = {"*.jpg","*.jpeg","*.png","*.tif","*.tiff","*.webp","*.bmp"};
-            for (const QString& f : dir.entryList(filters, QDir::Files, QDir::Name)) {
-                images << dir.filePath(f);
-                if (images.size() >= 4) break;
-            }
-            QImage canvas(sz, sz, QImage::Format_RGB32);
-            canvas.fill(QColor(0x2a, 0x2a, 0x2a));
-            if (!images.isEmpty()) {
-                QPainter p(&canvas);
-                int n = qMin(images.size(), 4);
-                int half = sz / 2;
-                for (int i = 0; i < n; ++i) {
-                    QImageReader reader(images[i]);
-                    reader.setAutoTransform(true);
-                    QSize s = reader.size().scaled(half, half, Qt::KeepAspectRatioByExpanding);
-                    reader.setScaledSize(s);
-                    QImage img = reader.read();
-                    if (img.isNull()) continue;
-                    img = img.scaled(half, half, Qt::KeepAspectRatioByExpanding, Qt::FastTransformation);
-                    // Przytnij do half×half
-                    int ox = (img.width() - half) / 2;
-                    int oy = (img.height() - half) / 2;
-                    img = img.copy(ox, oy, half, half);
-                    int cx = (i % 2) * half;
-                    int cy = (i / 2) * half;
-                    p.drawImage(cx, cy, img);
-                }
-            }
-            QPixmap pix = QPixmap::fromImage(canvas);
-            QPixmapCache::insert(cache_key, pix);
-            QMetaObject::invokeMethod(this, [this, path, pix]() {
-                m_pending_fast.remove(path);
-                emit thumb_ready(path, pix, ThumbQuality::Full);
-            }, Qt::QueuedConnection);
-        });
-        Q_UNUSED(fut);
-        return;
+        m_pending_fast.remove(path);
+        return;  // canvas narysuje 📁 gdy brak pixmapy
     }
 
     // 1. Sprawdź RAM cache (QPixmapCache) — natychmiastowe, bez I/O

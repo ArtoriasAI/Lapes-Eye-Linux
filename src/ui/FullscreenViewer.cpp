@@ -1,4 +1,8 @@
 #include "LapesEye/ui/FullscreenViewer.h"
+#if LEYE_HAS_GL
+#  include <cmath>
+#endif
+#include "LapesEye/core/ColorManagement.h"
 #include "LapesEye/core/MetaStore.h"
 #include <QApplication>
 #include <QScreen>
@@ -15,6 +19,22 @@
 
 namespace LapesEye {
 
+FullscreenViewer::~FullscreenViewer() {
+#if LEYE_HAS_GL
+    if (m_gl_ctx && m_gl_surf) {
+        m_gl_ctx->makeCurrent(m_gl_surf);
+        if (auto* f = gl()) {
+            if (m_gl_vao) f->glDeleteVertexArrays(1, &m_gl_vao);
+            if (m_gl_vbo) f->glDeleteBuffers(1, &m_gl_vbo);
+            if (m_gl_tex) f->glDeleteTextures(1, &m_gl_tex);
+        }
+        delete m_gl_fbo;  m_gl_fbo  = nullptr;
+        delete m_gl_prog; m_gl_prog = nullptr;
+        m_gl_ctx->doneCurrent();
+    }
+#endif
+}
+
 FullscreenViewer::FullscreenViewer(QWidget* parent)
     : QWidget(parent, Qt::Window)
 {
@@ -30,6 +50,9 @@ FullscreenViewer::FullscreenViewer(QWidget* parent)
         m_show_overlay = false;
         update();
     });
+#if LEYE_HAS_GL
+    gl_init();
+#endif
 }
 
 // ─── Pomocnicza: oblicz base_size obrazu na ekranie (bez zoom) ───────────────
@@ -83,7 +106,11 @@ void FullscreenViewer::show_image(const QStringList& paths, int index) {
     m_pixmap         = QPixmap{};
     m_loading_pixmap = QPixmap{};
     ++m_load_gen;  // anuluj ewentualne poprzednie żądania
+    ++m_prefetch_gen;  // anuluj stare wątki prefetch
+    m_prefetch_cache.clear();       // nowy folder — stary cache nieaktualny
+    m_prefetch_in_flight.clear();
     load_current();
+    prefetch_neighbors();
     showFullScreen();
     raise();
     activateWindow();
@@ -99,6 +126,7 @@ void FullscreenViewer::navigate(int delta) {
     m_show_overlay = true;
     m_overlay_timer->start();
     load_current();
+    prefetch_neighbors();
     // Emituj żeby MainWindow mógł zaznaczyć właściwe zdjęcie (punkt 5)
     emit index_changed(m_index);
 }
@@ -109,7 +137,19 @@ void FullscreenViewer::load_current() {
 
     QString path = m_paths[m_index];
 
-    // Sprawdź cache miniatur — pokaż natychmiast
+    // 1. Prefetch cache — zdjęcie już gotowe w pełnej jakości
+    if (m_prefetch_cache.contains(path)) {
+        QPixmap pix = m_prefetch_cache.take(path);  // weź i usuń z cache
+        m_prefetch_in_flight.remove(path);
+        m_pixmap  = pix;
+        m_loading = false;
+        update();
+        // Nie wywołujemy gl_upload_pixmap — paintEvent użyje CPU QPainter
+        // tak samo jak normalny flow z wątku tła
+        return;  // gotowe — nie uruchamiaj wątku tła
+    }
+
+    // 2. Cache miniatur — pokaż natychmiast jako placeholder
     QPixmap cached_pix;
     for (int sz : {1200, 600, 400, 300, 250, 220, 200}) {
         QString cache_key = path + "@" + QString::number(sz);
@@ -196,6 +236,9 @@ void FullscreenViewer::load_current() {
 
         if (img.isNull()) return;
 
+        // Zarządzanie kolorem — konwersja profilu ICC
+        img = apply_color_mode(img);
+
         // Skaluj tylko gdy obraz jest większy niż 2× ekran (np. medium format 100MP)
         QSize limit = screen_size * 2;
         if (img.width() > limit.width() || img.height() > limit.height())
@@ -219,29 +262,130 @@ void FullscreenViewer::load_current() {
     });
 }
 
+// ─── Prefetch sąsiednich zdjęć ───────────────────────────────────────────────
+void FullscreenViewer::prefetch_neighbors() {
+    if (m_paths.size() <= 1) return;
+
+    // Zbierz indeksy do prefetch (PREFETCH_RANGE w każdą stronę, bez bieżącego)
+    for (int d = 1; d <= PREFETCH_RANGE; ++d) {
+        for (int delta : {+d, -d}) {
+            int idx = m_index + delta;
+            if (idx < 0 || idx >= m_paths.size()) continue;
+            const QString& path = m_paths[idx];
+            // Pomiń jeśli już w cache lub w trakcie ładowania
+            if (m_prefetch_cache.contains(path)) continue;
+            if (m_prefetch_in_flight.contains(path)) continue;
+
+            m_prefetch_in_flight.insert(path);
+            QSize screen_size = QGuiApplication::primaryScreen()->size() * 2;
+            int pgen = m_prefetch_gen;  // snapshot generacji — wątek sprawdzi po zakończeniu
+
+            [[maybe_unused]] auto f = QtConcurrent::run([this, path, screen_size, pgen]() {
+                QImage img;
+                static const QSet<QString> raw_exts = {
+                    "arw","cr2","cr3","nef","nrw","orf","raf","rw2","dng","pef","srw","x3f"
+                };
+                QString ext = QFileInfo(path).suffix().toLower();
+
+                if (raw_exts.contains(ext)) {
+                    LibRaw raw;
+                    if (raw.open_file(path.toLocal8Bit().constData()) == LIBRAW_SUCCESS) {
+                        if (raw.unpack_thumb() == LIBRAW_SUCCESS) {
+                            libraw_processed_image_t* thumb = raw.dcraw_make_mem_thumb();
+                            if (thumb && thumb->type == LIBRAW_IMAGE_JPEG) {
+                                QByteArray jpeg_data(reinterpret_cast<const char*>(thumb->data),
+                                                     static_cast<int>(thumb->data_size));
+                                LibRaw::dcraw_clear_mem(thumb);
+                                QBuffer buf(&jpeg_data);
+                                buf.open(QIODevice::ReadOnly);
+                                QImageReader reader(&buf, "JPEG");
+                                reader.setAutoTransform(true);
+                                img = reader.read();
+                            } else if (thumb) {
+                                LibRaw::dcraw_clear_mem(thumb);
+                            }
+                        }
+                        if (img.isNull()) {
+                            if (raw.unpack() == LIBRAW_SUCCESS &&
+                                raw.dcraw_process() == LIBRAW_SUCCESS) {
+                                libraw_processed_image_t* proc = raw.dcraw_make_mem_image();
+                                if (proc) {
+                                    img = QImage(proc->data,
+                                                 proc->width, proc->height,
+                                                 proc->width * 3, QImage::Format_RGB888).copy();
+                                    LibRaw::dcraw_clear_mem(proc);
+                                }
+                            }
+                        }
+                    }
+                }
+                if (img.isNull()) {
+                    QImageReader reader(path);
+                    reader.setAutoTransform(true);
+                    img = reader.read();
+                }
+                if (img.isNull()) {
+                    QMetaObject::invokeMethod(this, [this, path, pgen]() {
+                        if (pgen == m_prefetch_gen)
+                            m_prefetch_in_flight.remove(path);
+                    }, Qt::QueuedConnection);
+                    return;
+                }
+
+                img = apply_color_mode(img);
+                QSize limit = screen_size * 2;
+                if (img.width() > limit.width() || img.height() > limit.height())
+                    img = img.scaled(limit, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+
+                int rotation = MetaStore::load(path).rotation;
+                if (rotation != 0) {
+                    QTransform t; t.rotate(rotation);
+                    img = img.transformed(t, Qt::SmoothTransformation);
+                }
+
+                QPixmap pix = QPixmap::fromImage(img);
+                QMetaObject::invokeMethod(this, [this, path, pix, pgen]() {
+                    m_prefetch_in_flight.remove(path);
+                    // Odrzuć jeśli show_image() zostało wywołane po starcie wątku
+                    if (pgen != m_prefetch_gen) return;
+                    // Zapisz tylko jeśli nadal prawdopodobnie potrzebne
+                    int idx = m_paths.indexOf(path);
+                    if (idx >= 0 && qAbs(idx - m_index) <= PREFETCH_RANGE)
+                        m_prefetch_cache[path] = pix;
+                }, Qt::QueuedConnection);
+            });
+        }
+    }
+}
+
 // ─── Rysowanie ───────────────────────────────────────────────────────────────
 void FullscreenViewer::paintEvent(QPaintEvent*) {
+    const QPixmap& pix = m_loading ? m_loading_pixmap : m_pixmap;
+
+#if LEYE_HAS_GL
+    // GPU path: obraz jako tekstura w VRAM, zoom/pan = MVP matrix
+    if (m_gl_ok && m_gl_tex && !pix.isNull()) {
+        gl_paint();
+        return;
+    }
+#endif
+
+    // CPU fallback
     QPainter p(this);
     p.fillRect(rect(), Qt::black);
-
-    const QPixmap& pix = m_loading ? m_loading_pixmap : m_pixmap;
     if (pix.isNull()) {
-        // Tylko gdy naprawdę nie ma nic do pokazania
         p.setPen(QColor("#666"));
         p.setFont(QFont("sans", 14));
         p.drawText(rect(), Qt::AlignCenter, "Ładowanie...");
         if (m_show_overlay) draw_overlay(p);
         return;
     }
-
     QSizeF bs = base_image_size();
     QSizeF zoomed = bs * m_zoom;
-    QPointF tl = QPointF(width() / 2.0 - zoomed.width()  / 2.0,
-                         height()/ 2.0 - zoomed.height() / 2.0) + m_offset;
-
+    QPointF tl = QPointF(width()/2.0 - zoomed.width()/2.0,
+                         height()/2.0 - zoomed.height()/2.0) + m_offset;
     p.setRenderHint(QPainter::SmoothPixmapTransform);
     p.drawPixmap(QRectF(tl, zoomed), pix, QRectF(pix.rect()));
-
     if (m_show_overlay) draw_overlay(p);
 }
 
@@ -369,4 +513,172 @@ void FullscreenViewer::resizeEvent(QResizeEvent* e) {
     update();
 }
 
+
+#if LEYE_HAS_GL
+// ════════════════════════════════════════════════════════════════════════════
+// GPU RENDERING — FullscreenViewer
+// Obraz jako tekstura w VRAM, zoom/pan = zmiana MVP matrix → zero CPU per frame
+// ════════════════════════════════════════════════════════════════════════════
+
+static const char* FS_VERT = R"GLSL(
+#version 330 core
+layout(location=0) in vec2 a_pos;
+layout(location=1) in vec2 a_uv;
+uniform mat4 u_mvp;
+out vec2 v_uv;
+void main() {
+    gl_Position = u_mvp * vec4(a_pos, 0.0, 1.0);
+    v_uv = a_uv;
+}
+)GLSL";
+
+static const char* FS_FRAG = R"GLSL(
+#version 330 core
+in vec2 v_uv;
+uniform sampler2D u_tex;
+out vec4 frag;
+void main() { frag = texture(u_tex, v_uv); }
+)GLSL";
+
+FullscreenViewer::GL45* FullscreenViewer::gl() const {
+    if (!m_gl_ctx) return nullptr;
+    return QOpenGLVersionFunctionsFactory::get<GL45>(m_gl_ctx);
+}
+
+void FullscreenViewer::gl_init() {
+    QSurfaceFormat fmt;
+    fmt.setVersion(4, 5);
+    fmt.setProfile(QSurfaceFormat::CoreProfile);
+    fmt.setRenderableType(QSurfaceFormat::OpenGL);
+    m_gl_surf = new QOffscreenSurface(nullptr, this);
+    m_gl_surf->setFormat(fmt);
+    m_gl_surf->create();
+    if (!m_gl_surf->isValid()) return;
+    m_gl_ctx = new QOpenGLContext(this);
+    m_gl_ctx->setFormat(fmt);
+    if (!m_gl_ctx->create()) return;
+    m_gl_ctx->makeCurrent(m_gl_surf);
+    auto* f = gl();
+    if (!f) { m_gl_ctx->doneCurrent(); return; }
+    f->glDisable(GL_DEPTH_TEST);
+    f->glEnable(GL_BLEND);
+    f->glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // Shader
+    m_gl_prog = new QOpenGLShaderProgram(this);
+    if (!m_gl_prog->addShaderFromSourceCode(QOpenGLShader::Vertex,   FS_VERT) ||
+        !m_gl_prog->addShaderFromSourceCode(QOpenGLShader::Fragment, FS_FRAG) ||
+        !m_gl_prog->link()) {
+        delete m_gl_prog; m_gl_prog = nullptr;
+        m_gl_ctx->doneCurrent(); return;
+    }
+    m_gl_u_mvp = m_gl_prog->uniformLocation("u_mvp");
+
+    // Quad jednostkowy [0,0]→[1,1]
+    static const float Q[] = {
+        0.f,0.f, 0.f,1.f,  1.f,0.f, 1.f,1.f,
+        1.f,1.f, 1.f,0.f,  0.f,0.f, 0.f,1.f,
+        1.f,1.f, 1.f,0.f,  0.f,1.f, 0.f,0.f,
+    };
+    f->glCreateVertexArrays(1, &m_gl_vao);
+    f->glCreateBuffers(1, &m_gl_vbo);
+    f->glNamedBufferStorage(m_gl_vbo, sizeof(Q), Q, 0);
+    f->glVertexArrayVertexBuffer(m_gl_vao, 0, m_gl_vbo, 0, 4*sizeof(float));
+    f->glEnableVertexArrayAttrib(m_gl_vao, 0);
+    f->glVertexArrayAttribFormat(m_gl_vao, 0, 2, GL_FLOAT, GL_FALSE, 0);
+    f->glVertexArrayAttribBinding(m_gl_vao, 0, 0);
+    f->glEnableVertexArrayAttrib(m_gl_vao, 1);
+    f->glVertexArrayAttribFormat(m_gl_vao, 1, 2, GL_FLOAT, GL_FALSE, 2*sizeof(float));
+    f->glVertexArrayAttribBinding(m_gl_vao, 1, 0);
+
+    m_gl_ok = true;
+    m_gl_ctx->doneCurrent();
+}
+
+void FullscreenViewer::gl_upload_pixmap(const QPixmap& pix) {
+    if (!m_gl_ok || !m_gl_ctx || !m_gl_surf) return;
+    m_gl_ctx->makeCurrent(m_gl_surf);
+    auto* f = gl(); if (!f) { m_gl_ctx->doneCurrent(); return; }
+
+    QImage img = pix.toImage().convertToFormat(QImage::Format_RGBA8888);
+    const int w = img.width(), h = img.height();
+
+    // Usuń starą teksturę jeśli rozmiar się zmienił
+    if (m_gl_tex && m_gl_tex_size != QSize(w, h)) {
+        f->glDeleteTextures(1, &m_gl_tex);
+        m_gl_tex = 0;
+    }
+    if (!m_gl_tex) {
+        f->glCreateTextures(GL_TEXTURE_2D, 1, &m_gl_tex);
+        int mips = 1 + (int)std::log2((double)qMax(w, h));
+        f->glTextureStorage2D(m_gl_tex, mips, GL_RGBA8, w, h);
+        f->glTextureParameteri(m_gl_tex, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        f->glTextureParameteri(m_gl_tex, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        f->glTextureParameteri(m_gl_tex, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        f->glTextureParameteri(m_gl_tex, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    f->glTextureSubImage2D(m_gl_tex, 0, 0, 0, w, h,
+                           GL_RGBA, GL_UNSIGNED_BYTE, img.constBits());
+    f->glGenerateTextureMipmap(m_gl_tex);
+    m_gl_tex_size = QSize(w, h);
+    m_gl_ctx->doneCurrent();
+}
+
+void FullscreenViewer::gl_paint() {
+    if (!m_gl_ok || !m_gl_tex || !m_gl_ctx || !m_gl_surf) return;
+    const int W = width(), H = height();
+    m_gl_ctx->makeCurrent(m_gl_surf);
+    auto* f = gl(); if (!f) { m_gl_ctx->doneCurrent(); return; }
+
+    // Cache FBO
+    if (!m_gl_fbo || m_gl_fbo->size() != QSize(W, H)) {
+        delete m_gl_fbo;
+        QOpenGLFramebufferObjectFormat fmt;
+        fmt.setSamples(0);
+        m_gl_fbo = new QOpenGLFramebufferObject(W, H, fmt);
+    }
+    if (!m_gl_fbo->isValid()) { m_gl_ctx->doneCurrent(); return; }
+
+    m_gl_fbo->bind();
+    f->glViewport(0, 0, W, H);
+    f->glClearColor(0.f, 0.f, 0.f, 1.f);
+    f->glClear(GL_COLOR_BUFFER_BIT);
+
+    // Projekcja ortho — piksel = jednostka, Y w dół
+    m_gl_proj.setToIdentity();
+    m_gl_proj.ortho(0.f, W, H, 0.f, -1.f, 1.f);
+
+    // Oblicz pozycję i rozmiar — używaj rozmiaru tekstury (nie pixmapy)
+    QSizeF bs = QSizeF(m_gl_tex_size).scaled(QSizeF(W, H), Qt::KeepAspectRatio);
+    QSizeF zoomed = bs * m_zoom;
+    QPointF tl(W/2.0 - zoomed.width()/2.0,
+               H/2.0 - zoomed.height()/2.0);
+    tl += m_offset;
+
+    QMatrix4x4 model;
+    model.translate(tl.x(), tl.y());
+    model.scale(zoomed.width(), zoomed.height());
+
+    m_gl_prog->bind();
+    m_gl_prog->setUniformValue(m_gl_u_mvp, m_gl_proj * model);
+    m_gl_prog->setUniformValue("u_tex", 0);
+    f->glBindVertexArray(m_gl_vao);
+    f->glBindTextureUnit(0, m_gl_tex);
+    f->glDrawArrays(GL_TRIANGLES, 0, 6);
+    f->glBindTextureUnit(0, 0);
+    f->glBindVertexArray(0);
+    m_gl_prog->release();
+    m_gl_fbo->release();
+
+    QImage result = m_gl_fbo->toImage(true);
+    m_gl_ctx->doneCurrent();
+
+    if (!result.isNull()) {
+        QPainter p(this);
+        p.drawImage(0, 0, result);
+        draw_overlay(p);
+    }
+}
+
+#endif // LEYE_HAS_GL
 } // namespace LapesEye

@@ -55,12 +55,18 @@ bool SettingsDialog::external_editor_as_layer() {
     return s.value("editor/as_layer", false).toBool();
 }
 
+SettingsDialog::ColorMode SettingsDialog::color_mode() {
+    QSettings s("Lape", "LapesEye");
+    int v = s.value("color/mode", 1).toInt();  // domyślnie sRGB
+    return static_cast<ColorMode>(v);
+}
+
 // ─── Konstruktor ──────────────────────────────────────────────────────────────
 
 SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     setWindowTitle("Ustawienia Lape's Eye");
     setMinimumWidth(480);
-    setModal(true);
+    setWindowModality(Qt::WindowModal);  // blokuje tylko okno główne, bez zaciemniania
     setup_ui();
     load_values();
 }
@@ -160,6 +166,32 @@ void SettingsDialog::setup_ui() {
     ui_form->addRow("", m_histogram_visible);
     layout->addWidget(ui_box);
 
+    // ── Zarządzanie kolorem ───────────────────────────────────────────────────
+    auto* col_box  = new QGroupBox("Zarządzanie kolorem", this);
+    auto* col_form = new QFormLayout(col_box);
+
+    m_color_mode = new QComboBox(this);
+    m_color_mode->addItem("Brak — surowe RGB (najszybszy)",         0);
+    m_color_mode->addItem("Konwertuj do sRGB (zalecane)",           1);
+    m_color_mode->addItem("Konwertuj do profilu monitora",          2);
+    m_color_mode->setToolTip(
+        "Brak: wyświetla surowe wartości RGB bez korekcji profilu ICC.\n"
+        "  Szybko, ale zdjęcia Adobe RGB mogą wyglądać wyblakle.\n\n"
+        "sRGB: konwertuje profil ICC zdjęcia (Adobe RGB, ProPhoto itd.)\n"
+        "  na sRGB przed wyświetleniem. Zgodne z Bridge i przeglądarkami.\n\n"
+        "Profil monitora: konwertuje do profilu ICC monitora (jeśli dostępny).\n"
+        "  Najdokładniejsze — wymaga skalibrowanego monitora z profilem.");
+    col_form->addRow("Tryb:", m_color_mode);
+
+    auto* col_info = new QLabel(
+        "<small style='color:#888'>"
+        "Ustawienie wpływa na wyświetlanie miniatur, podglądu i pełnoekranowego.<br>"
+        "Zmiana wymaga odświeżenia miniatur (Wyczyść cache → restart)."
+        "</small>", this);
+    col_info->setTextFormat(Qt::RichText);
+    col_form->addRow("", col_info);
+    layout->addWidget(col_box);
+
     // ── Zewnętrzny edytor ─────────────────────────────────────────────────────
     auto* ed_box  = new QGroupBox("Zewnętrzny edytor (E)", this);
     auto* ed_form = new QFormLayout(ed_box);
@@ -242,6 +274,15 @@ void SettingsDialog::load_values() {
 
     m_histogram_visible->setChecked(histogram_visible());
 
+    // Zarządzanie kolorem
+    int cm = static_cast<int>(color_mode());
+    for (int i = 0; i < m_color_mode->count(); ++i) {
+        if (m_color_mode->itemData(i).toInt() == cm) {
+            m_color_mode->setCurrentIndex(i);
+            break;
+        }
+    }
+
     // Zewnętrzny edytor
     m_editor_path->setText(external_editor_path());
     m_editor_args->setText(external_editor_args());
@@ -266,9 +307,9 @@ void SettingsDialog::update_size_labels() {
     double current_mb = s.value("cache/current_size_mb", 0.0).toDouble();
     if (current_mb > 0)
         m_disk_cache_info->setText(
-            QString("%1 MB (%.0f%% limitu)")
+            QString("%1 MB (%2% limitu)")
                 .arg(current_mb, 0, 'f', 1)
-                .arg(current_mb / disk * 100));
+                .arg(current_mb / disk * 100, 0, 'f', 0));
     else
         m_disk_cache_info->setText("(nieznany — uruchom program żeby sprawdzić)");
 }
@@ -289,6 +330,7 @@ void SettingsDialog::save_values() {
     s.setValue("cache/clear_on_start", m_clear_on_start->isChecked());
     s.setValue("cache/preload_full", m_preload_full->isChecked());
     s.setValue("ui/histogram_visible", m_histogram_visible->isChecked());
+    s.setValue("color/mode", m_color_mode->currentData().toInt());
 
     // Zewnętrzny edytor
     s.setValue("editor/path",     m_editor_path->text().trimmed());

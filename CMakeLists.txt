@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(LapesEye VERSION 0.5.2 LANGUAGES CXX)
+project(LapesEye VERSION 0.5.6 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -87,6 +87,7 @@ set(LEYE_SOURCES
     src/core/FileScanner.cpp
     src/core/ThumbCache.cpp
     src/core/MetaStore.cpp
+    src/core/ColorManagement.cpp
     src/core/Collection.cpp
     src/core/LapeIPC.cpp
 
@@ -159,6 +160,26 @@ endif()
 
 if(NOT WIN32)
     target_link_options(lapes-eye PRIVATE -rdynamic)
+endif()
+
+# ─── Zarządzanie kolorem — profil ICC monitora ───────────────────────────────
+if(UNIX AND NOT APPLE)
+    # Linux/X11: odczyt _ICC_PROFILE przez XCB (wbudowany w Qt6)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(XCB xcb)
+        if(XCB_FOUND)
+            target_link_libraries(lapes-eye PRIVATE ${XCB_LIBRARIES})
+            target_include_directories(lapes-eye PRIVATE ${XCB_INCLUDE_DIRS})
+            message(STATUS "  ICC monitor:  XCB (Linux/X11)")
+        else()
+            message(STATUS "  ICC monitor:  XCB niedostępny — fallback sRGB")
+        endif()
+    endif()
+elseif(WIN32)
+    # Windows: GetICMProfileW z mscms.dll
+    target_link_libraries(lapes-eye PRIVATE mscms)
+    message(STATUS "  ICC monitor:  WinAPI ICM (Windows)")
 endif()
 
 target_link_directories(lapes-eye PRIVATE

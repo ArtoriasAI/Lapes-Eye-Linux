@@ -161,8 +161,10 @@ private:
     void gpu_delete_entry(GpuEntry& e);
     void gpu_delete_all();
 
-    QOpenGLContext*       m_gl_ctx  = nullptr;
-    QOffscreenSurface*    m_gl_surf = nullptr;
+    QOpenGLContext*          m_gl_ctx   = nullptr;
+    QOffscreenSurface*       m_gl_surf  = nullptr;
+    QOpenGLFramebufferObject*m_gl_fbo   = nullptr;  // cache FBO — nie alokuj per frame
+    QSize                    m_fbo_size;             // rozmiar cache FBO
     QSize                 m_last_size;
     QOpenGLShaderProgram* m_prog    = nullptr;
     GLuint                m_vao     = 0;

@@ -1066,19 +1066,22 @@ void ThumbnailGrid::on_item_clicked(const QString& path, Qt::KeyboardModifiers m
         return;
     }
 
-    // Znajdź indeks klikniętego elementu i przewiń żeby był widoczny
-    // (przy max zoom kafelki są duże i element może być poza widokiem)
+    // Znajdź indeks klikniętego elementu i przewiń minimalnie żeby był widoczny
+    // Identyczne zachowanie jak strzałki — NIE centruj, tylko minimalne przewinięcie
     if (m_canvas) {
         for (int i = 0; i < m_visible.size(); ++i) {
             if (m_visible[i].path == path) {
                 QRect r    = m_canvas->item_rect(i);
                 int sv     = m_scroll->verticalScrollBar()->value();
                 int vp_h   = m_scroll->viewport()->height();
-                if (r.top() < sv || r.bottom() > sv + vp_h) {
-                    // Element poza widokiem — centruj go
-                    int new_sv = r.top() - (vp_h - r.height()) / 2;
-                    m_scroll->verticalScrollBar()->setValue(qMax(0, new_sv));
+                if (r.top() < sv) {
+                    // Element wychodzi poza górę — przewiń do góry
+                    m_scroll->verticalScrollBar()->setValue(r.top());
+                } else if (r.bottom() > sv + vp_h) {
+                    // Element wychodzi poza dół — przewiń minimalnie w dół
+                    m_scroll->verticalScrollBar()->setValue(r.bottom() - vp_h);
                 }
+                // W pełni widoczny — nie ruszaj scrolla
                 break;
             }
         }
@@ -1656,12 +1659,29 @@ void ThumbnailGrid::dropEvent(QDropEvent* e) {
 void ThumbnailGrid::delete_selected() {
     QStringList paths = selected_paths();
     if (paths.isEmpty()) return;
-    // Bez potwierdzenia — Del usuwa natychmiast
+
+    // Przenieś do kosza systemowego (Linux: ~/.local/share/Trash, Windows: Kosz)
+    // QFile::moveToTrash() — bezpieczne, można odzyskać
+    QStringList failed;
     for (const auto& path : paths) {
-        if (QFileInfo(path).isDir()) QDir(path).removeRecursively();
-        else                         QFile::remove(path);
+        bool ok = false;
+        if (QFileInfo(path).isDir()) {
+            // Foldery: moveToTrash działa też dla katalogów od Qt 5.15
+            ok = QFile::moveToTrash(path);
+            if (!ok) ok = !QDir(path).removeRecursively();
+        } else {
+            ok = QFile::moveToTrash(path);
+        }
+        if (!ok) failed << QFileInfo(path).fileName();
+
+        // Plik .leye usuwamy na stałe (metadane nieistotne bez pliku)
         QString leye = path + ".leye";
         if (QFileInfo::exists(leye)) QFile::remove(leye);
+    }
+
+    if (!failed.isEmpty()) {
+        QMessageBox::warning(this, "Usuwanie",
+            "Nie udało się przenieść do kosza:\n" + failed.join("\n"));
     }
     remove_items_in_place(paths);
 }

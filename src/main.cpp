@@ -26,7 +26,7 @@ int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     app.setApplicationName("Lape's Eye");
     app.setOrganizationName("Lape");
-    app.setApplicationVersion("0.5.2");
+    app.setApplicationVersion("0.5.6");
     app.setDesktopFileName("lapes-eye");
 
     // Ikona aplikacji — wielorozdzielcza z QRC
@@ -61,13 +61,36 @@ int main(int argc, char* argv[]) {
 
     win.show();
 
-    // Jeśli podano folder jako argument, otwórz go po pokazaniu okna
+    // Obsługa argumentów:
+    // - folder: otwórz bezpośrednio
+    // - plik: otwórz folder zawierający + zaznacz plik
+    // Dzięki temu "Otwórz w Lape's Eye" z menedżera plików działa dla obu
     const auto args = QApplication::arguments();
-    if (args.size() > 1 && QDir(args[1]).exists()) {
-        QString startDir = args[1];
-        QTimer::singleShot(0, &win, [&win, startDir]() {
-            win.open_folder(startDir);
-        });
+    if (args.size() > 1) {
+        QString arg = args[1];
+        QString startDir;
+        QString selectFile;
+
+        if (QDir(arg).exists()) {
+            // To jest folder
+            startDir = arg;
+        } else if (QFileInfo(arg).isFile()) {
+            // To jest plik — otwórz jego folder i zaznacz plik
+            startDir  = QFileInfo(arg).absolutePath();
+            selectFile = arg;
+        }
+
+        if (!startDir.isEmpty()) {
+            QTimer::singleShot(0, &win, [&win, startDir, selectFile]() {
+                win.open_folder(startDir);
+                if (!selectFile.isEmpty()) {
+                    // Zaznacz konkretny plik po otwarciu folderu
+                    QTimer::singleShot(500, &win, [&win, selectFile]() {
+                        win.select_file(selectFile);
+                    });
+                }
+            });
+        }
     }
 
     return app.exec();

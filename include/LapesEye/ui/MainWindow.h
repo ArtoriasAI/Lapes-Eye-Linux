@@ -40,6 +40,7 @@ public:
     ~MainWindow();
 
     void open_folder(const QString& path);
+    void select_file(const QString& path);  // zaznacz plik w bieżącej siatce
     void open_folder_in_new_tab(const QString& path, bool switch_to = true);
     static void open_folder_in_new_window(const QString& path);
 
