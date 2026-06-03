@@ -1,4 +1,4 @@
-# <img src="resources/icons/lapes-eye-256.png" width="40"> Lape's Eye
+# <img src="resources/icons/lapes-eye.png" width="40"> Lape's Eye
 
 **A fast, native photo browser and asset manager for Linux** — an open-source alternative to Adobe Bridge.
 
@@ -22,7 +22,7 @@
 
 | App | Status | Role |
 |-----|--------|------|
-| <img src="resources/icons/lapes-eye-256.png" width="20"> **Lape's Eye** | ✅ Active | Photo browser & asset manager (this app) |
+| <img src="resources/icons/lapes-eye.png" width="20"> **Lape's Eye** | ✅ Active | Photo browser & asset manager (this app) |
 | 🎞️ **Lape RAW Editor** | 🔄 In development | Non-destructive RAW processor |
 | 🖼️ **Lape** | 📋 Planned | Full photo editor — open-source Photoshop alternative |
 
