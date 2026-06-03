@@ -1,4 +1,4 @@
-# 👁️ Lape's Eye
+# <img src="resources/icons/lapes-eye-256.png" width="40"> Lape's Eye
 
 **A fast, native photo browser and asset manager for Linux** — an open-source alternative to Adobe Bridge.
 
@@ -18,7 +18,15 @@
 
 ## What is Lape's Eye?
 
-Linux has great photo editors (Darktable, RawTherapee, GIMP) but nothing that works like Adobe Bridge — a fast, non-destructive browser where you rate, filter, and organize thousands of RAW files before editing. **Lape's Eye** fills that gap.
+**Lape's Eye** is the first application in the **LAPE** suite — *Linux Advanced Photo Editor* — a fully native, open-source photography pipeline for Linux:
+
+| App | Status | Role |
+|-----|--------|------|
+| <img src="resources/icons/lapes-eye-256.png" width="20"> **Lape's Eye** | ✅ Active | Photo browser & asset manager (this app) |
+| 🎞️ **Lape RAW Editor** | 🔄 In development | Non-destructive RAW processor |
+| 🖼️ **Lape** | 📋 Planned | Full photo editor — open-source Photoshop alternative |
+
+Linux has great photo editors (Darktable, RawTherapee, GIMP) but nothing that works like Adobe Bridge — a fast, non-destructive browser where you rate, filter, and organize thousands of RAW files before editing. **Lape's Eye** fills that gap, and is designed to work seamlessly with the rest of the LAPE suite.
 
 Built natively in **C++20 + Qt6**. No Electron, no Flatpak required, no subscription.
 
