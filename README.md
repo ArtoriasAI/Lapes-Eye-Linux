@@ -1,158 +1,120 @@
-# Lape's Eye v0.1 — Przeglądarka mediów dla Lape
+# 👁️ Lape's Eye
 
-**Lape's Eye** to odpowiednik Adobe Bridge stworzony specjalnie dla
-[Lape — Linux Advanced Photo Editor](../Lape-v14-fix2/).
-Napisany w C++20 + Qt6, docelowo dla EndeavourOS / Arch Linux.
+**A fast, native photo browser and asset manager for Linux** — an open-source alternative to Adobe Bridge.
+
+![screenshot](screenshot1.png)
+
+*Browsing a HEMA tournament photo session — folder tree, thumbnail grid, full EXIF panel and live preview*
 
 ---
 
-## Zależności
+[![Version](https://img.shields.io/badge/version-0.5.6-brightgreen)](https://github.com/ArtoriasAI/Lapes-Eye-Linux/releases)
+[![Platform](https://img.shields.io/badge/platform-Linux-blue)](https://github.com/ArtoriasAI/Lapes-Eye-Linux/releases)
+[![Language](https://img.shields.io/badge/C%2B%2B20-Qt6-green)](#)
+[![License](https://img.shields.io/badge/license-GPL--3.0-orange)](#)
+[![Sponsor](https://img.shields.io/badge/❤_Sponsor-PayPal-blue)](https://paypal.me/ArtoriasAi)
+
+---
+
+## What is Lape's Eye?
+
+Linux has great photo editors (Darktable, RawTherapee, GIMP) but nothing that works like Adobe Bridge — a fast, non-destructive browser where you rate, filter, and organize thousands of RAW files before editing. **Lape's Eye** fills that gap.
+
+Built natively in **C++20 + Qt6**. No Electron, no Flatpak required, no subscription.
+
+---
+
+## Features
+
+**Browse & Navigate**
+- Virtual thumbnail grid — handles thousands of files without slowdown
+- Folder tree with color labels and collage previews
+- Breadcrumb navigation bar with full history
+- Multi-tab support — open several folders simultaneously
+
+**Format Support**
+- RAW: ARW, CR2, CR3, NEF, ORF, RAF, RW2, DNG (via libraw)
+- Standard: JPEG, PNG, TIFF, WebP, BMP, PSD
+
+**Rate & Filter**
+- Star ratings (1–5), color labels, Pick/Reject flags
+- Filter bar: All / Picked / Rejected / RAW / PSD
+- Batch rename with token support
+
+**Metadata**
+- Full EXIF panel — camera, lens, exposure, ISO, dimensions
+- Editable annotations saved as `.leye` sidecar files (portable, like XMP)
+
+**Performance**
+- SQLite thumbnail cache — fast startup even with large libraries
+- Progressive loading with priority queue (visible thumbnails first)
+- EXIF-aware RAW rotation
+
+---
+
+## Installation
+
+### Download AppImage (recommended)
+
+Grab the latest `.AppImage` from [Releases](https://github.com/ArtoriasAI/Lapes-Eye-Linux/releases):
+
+```bash
+chmod +x LapesEye-*.AppImage
+./LapesEye-*.AppImage
+```
+
+### Build from source (Arch / EndeavourOS)
 
 ```bash
 sudo pacman -S --needed cmake qt6-base libraw exiv2 pkgconf base-devel
-```
 
-## Budowanie
-
-```bash
-chmod +x build.sh
-./build.sh
-
-# Uruchomienie
+git clone https://github.com/ArtoriasAI/Lapes-Eye-Linux
+cd Lapes-Eye-Linux
+chmod +x build.sh && ./build.sh
 ./build/lapes-eye
-./build/lapes-eye ~/Zdjecia    # z folderem startowym
 ```
 
 ---
 
-## Architektura
+## Keyboard Shortcuts
 
-```
-lapes-eye/
-├── src/
-│   ├── core/
-│   │   ├── FileScanner   — skanowanie folderów, wykrywanie formatów
-│   │   ├── ThumbCache    — SQLite cache miniatur (~/.cache/lapes-eye/)
-│   │   ├── MetaStore     — EXIF (libexiv2) + własne .leye metadane
-│   │   ├── Collection    — kolekcje (TODO v0.2)
-│   │   └── LapeIPC       — IPC przez Unix socket → Lape
-│   ├── ui/
-│   │   ├── MainWindow    — główne okno, ciemny motyw (Fusion)
-│   │   ├── FolderPanel   — drzewo folderów + ulubione (lewy dock)
-│   │   ├── ThumbnailGrid — siatka miniatur z lazy loading (centrum)
-│   │   ├── ThumbnailItem — jeden kafelek (custom QPainter)
-│   │   ├── PreviewPanel  — duży podgląd (prawy dock góra)
-│   │   ├── MetaPanel     — EXIF + edytowalne adnotacje (prawy dock dół)
-│   │   ├── FilterBar     — filtrowanie po ocenie/etykiecie/formacie (dół)
-│   │   └── BatchRenameDialog — zmiana nazw wsadowych z tokenami
-│   └── workers/
-│       └── ThumbWorker   — async generowanie miniatur (QThreadPool)
-└── include/LapesEye/     — nagłówki
-
-```
-
----
-
-## Integracja z Lape — IPC
-
-Lape's Eye komunikuje się z Lape przez **Unix domain socket**:
-
-```
-~/.config/lape/bridge/lape.sock
-```
-
-### Co musi dodać Lape (po stronie serwera):
-
-```cpp
-// W MainWindow::MainWindow() Lape — dodać serwer:
-#include <QLocalServer>
-
-m_bridge_server = new QLocalServer(this);
-m_bridge_server->listen(QDir::homePath() + "/.config/lape/bridge/lape.sock");
-
-connect(m_bridge_server, &QLocalServer::newConnection, this, [this]() {
-    auto* conn = m_bridge_server->nextPendingConnection();
-    connect(conn, &QLocalSocket::readyRead, this, [this, conn]() {
-        auto data = conn->readAll();
-        auto doc  = QJsonDocument::fromJson(data);
-        QString cmd = doc["cmd"].toString();
-
-        if (cmd == "open_file") {
-            open_document(doc["path"].toString());
-        } else if (cmd == "open_as_layer") {
-            open_as_new_layer(doc["path"].toString());
-        } else if (cmd == "batch_open") {
-            for (auto p : doc["paths"].toArray())
-                open_document(p.toString());
-        }
-    });
-});
-```
-
-### Komendy wysyłane przez Lape's Eye:
-
-| Komenda          | Akcja w Lape                              |
-|------------------|-------------------------------------------|
-| `open_file`      | Otwórz jako nowy dokument                 |
-| `open_as_layer`  | Dodaj jako nową warstwę w bieżącym dok.   |
-| `open_raw_acr`   | Otwórz RAW przez Camera Raw equivalent    |
-| `batch_open`     | Otwórz wiele plików naraz                 |
-
----
-
-## Format metadanych .leye
-
-Każdy plik `foto.jpg` może mieć towarzyszący `foto.jpg.leye` (JSON):
-
-```json
-{
-  "rating": 4,
-  "color_label": "green",
-  "flag": "pick",
-  "keywords": ["pejzaż", "jesień", "Tatry"],
-  "note": "Do portfolio",
-  "lape_edits": {}
-}
-```
-
-Metadane są **przenośne** — razem z plikiem zdjęcia (tak jak XMP sidecar).
-
----
-
-## Skróty klawiszowe
-
-| Skrót          | Akcja                              |
-|----------------|------------------------------------|
-| `Enter`        | Otwórz zaznaczone w Lape           |
-| `Shift+Enter`  | Otwórz jako warstwę w Lape         |
-| `1–5`          | Ustaw ocenę gwiazdkową             |
-| `0`            | Usuń ocenę                         |
-| `6–9`          | Etykieta koloru (cz/żó/zie/ni)     |
-| `Ctrl+A`       | Zaznacz wszystko                   |
-| `Escape`       | Odznacz wszystko                   |
-| `Ctrl+O`       | Otwórz folder                      |
-| `Ctrl+Shift+R` | Zmiana nazw wsadowych              |
-| `Ctrl+Q`       | Wyjdź                              |
+| Shortcut | Action |
+|----------|--------|
+| `Enter` | Open selected in Lape editor |
+| `1–5` | Set star rating |
+| `0` | Clear rating |
+| `6–9` | Color label |
+| `Ctrl+A` | Select all |
+| `F2` | Rename |
+| `Ctrl+Shift+R` | Batch rename |
 
 ---
 
 ## Roadmap
 
-### v0.2
-- [ ] Kolekcje statyczne i smart (filtrowane automatycznie)
-- [ ] Pełny podgląd (spacja → fullscreen)
-- [ ] Histogram w PreviewPanel
-- [ ] Skan rekurencyjny (podkatalogi)
-- [ ] Tryb porównania 2/4 zdjęć obok siebie
+| Version | Status | Highlights |
+|---------|--------|------------|
+| v0.1–v0.4 | ✅ Done | Core browser, RAW, EXIF, cache, tabs |
+| v0.5 | ✅ Done | Virtual grid, breadcrumb, batch rename, color labels |
+| v0.6 | 🔄 In progress | Stability, Windows port |
+| v0.7 | 📋 Planned | Lape RAW Editor integration — open RAW files directly in the built-in RAW processor |
 
-### v0.3
-- [ ] Synchronizacja ustawień Camera Raw (blok `lape_edits` w .leye)
-- [ ] Kopiowanie kart SD z automatycznym backupem
-- [ ] Eksport (Image Processor) z wywołaniem Lape w tle
-- [ ] Galeria PDF / HTML (Output workspace)
+---
 
-### v1.0
-- [ ] Słowa kluczowe hierarchiczne
-- [ ] Wyszukiwanie pełnotekstowe (FTS5 w SQLite)
-- [ ] Plugin system dla zewnętrznych edytorów
-- [ ] GNOME / KDE integracja (portal plików)
+## ❤️ Support Development
+
+Lape's Eye is a solo open-source project. If it saves you from booting Windows just to use Bridge, consider sponsoring:
+
+**[→ Donate via PayPal](https://paypal.me/ArtoriasAi)**
+
+GitHub Sponsors coming soon.
+
+---
+
+## Tech Stack
+
+C++20 · Qt 6 · libraw · exiv2 · SQLite · OpenGL
+
+## License
+
+GPL-3.0
