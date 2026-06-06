@@ -3,6 +3,7 @@
 #include "LapesEye/ui/CompareView.h"
 #include <QWidget>
 #include <QToolButton>
+#include <QSlider>
 #include <QLineEdit>
 #include <QComboBox>
 #include <QPixmap>
@@ -18,7 +19,8 @@ signals:
     void filter_changed(const GridFilter& filter);
     void view_mode_changed(CompareMode mode);
     void advanced_search_requested();
-    void rotate_requested(int degrees);  // -90 lub +90
+    void rotate_requested(int degrees);
+    void thumb_size_changed(int size);
 
 private:
     void emit_filter();
@@ -36,6 +38,10 @@ private:
     QToolButton* m_psd_only    = nullptr;
     QToolButton* m_rotate_ccw  = nullptr;
     QToolButton* m_rotate_cw   = nullptr;
+    QSlider*     m_thumb_slider= nullptr;
+
+public:
+    QSlider* thumb_slider() const { return m_thumb_slider; }
     QLineEdit*   m_search      = nullptr;
     QComboBox*   m_sort_combo  = nullptr;
 

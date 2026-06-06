@@ -48,6 +48,8 @@ protected:
 private:
     void     navigate(int delta);
     void     load_current();
+    void     load_full_resolution();  // etap 2: pełna jakość z korekcją kolorów
+    void     start_fade(const QPixmap& next);  // cross-fade między etapami
     void     prefetch_neighbors();  // ładuj sąsiednie zdjęcia w tle
     void     draw_overlay(QPainter& p);
     QSizeF   base_image_size() const;
@@ -57,10 +59,20 @@ private:
     QStringList   m_paths;
     int           m_index  = 0;
     QPixmap       m_pixmap;
+    QPixmap       m_pixmap_full;      // pełna rozdzielczość — do zoom-in
     QPixmap       m_loading_pixmap;
-    bool          m_loading   = false;
+    bool          m_loading      = false;
+    bool          m_loading_full = false;  // trwa ładowanie pełnej rozdzielczości
+    int           m_load_gen_full = 0;
     QFuture<void> m_future;
     int           m_load_gen  = 0;  // anuluj stare żądania
+
+    float         m_raw_factor = 1.f;  // factor jasności obliczony w etapie 1
+
+    // Cross-fade etap1→etap3
+    QPixmap       m_fade_from;       // obraz z którego fade-out
+    float         m_fade_alpha = 1.f; // 0.0=fade_from, 1.0=m_pixmap
+    QTimer*       m_fade_timer = nullptr;
 
     // Prefetch sąsiednich zdjęć
     QHash<QString, QPixmap> m_prefetch_cache;  // path → gotowy pixmap

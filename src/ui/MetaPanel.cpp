@@ -133,7 +133,7 @@ void MetaPanel::setup_ui() {
         }
         save();
         emit flag_changed(m_current_path);
-        emit return_focus();  // zwróć fokus do siatki
+        emit return_focus();
     });
 
     // ── Zapisz ────────────────────────────────────────────────────────────────
@@ -159,7 +159,19 @@ void MetaPanel::setup_ui() {
     root->addWidget(scroll);
 }
 
-// ─── Event filter (zaznacz nazwę bez rozszerzenia przy focusie) ──────────────
+// ─── Programowe ustawienie flagi (skróty Z/X) ────────────────────────────────
+
+void MetaPanel::set_flag(PickFlag flag) {
+    if (m_current_path.isEmpty()) return;
+    if (m_current_flag == flag) flag = PickFlag::None;  // toggle
+    m_current_flag = flag;
+    m_btn_pick->setChecked(flag == PickFlag::Pick);
+    m_btn_reject->setChecked(flag == PickFlag::Reject);
+    save();
+    emit flag_changed(m_current_path);
+}
+
+// ─── Event filter ────────────────────────────────────────────────────────────
 
 bool MetaPanel::eventFilter(QObject* obj, QEvent* event) {
     if (obj == m_filename) {

@@ -15,6 +15,7 @@ class MetaPanel : public QWidget {
 public:
     explicit MetaPanel(QWidget* parent = nullptr);
     void load(const FileMetadata& meta);
+    void set_flag(PickFlag flag);  // programowe ustawienie flagi (skróty Z/X)
     void set_file_count(int loaded, int total);
     bool is_editing_filename() const;
     QString current_path() const { return m_current_path; }

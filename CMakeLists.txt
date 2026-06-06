@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(LapesEye VERSION 0.5.6 LANGUAGES CXX)
+project(LapesEye VERSION 0.5.7 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -88,6 +88,8 @@ set(LEYE_SOURCES
     src/core/ThumbCache.cpp
     src/core/MetaStore.cpp
     src/core/ColorManagement.cpp
+    src/core/CameraProfiles.cpp
+    src/core/SonyILCE7M3Profile.cpp
     src/core/Collection.cpp
     src/core/LapeIPC.cpp
 

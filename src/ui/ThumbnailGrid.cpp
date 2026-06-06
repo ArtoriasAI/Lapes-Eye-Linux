@@ -1847,8 +1847,8 @@ void ThumbnailGrid::keyPressEvent(QKeyEvent* e) {
             if (e->modifiers() & Qt::ControlModifier) copy_selected(false);
             break;
         case Qt::Key_X:
-            if (e->modifiers() & Qt::ControlModifier) copy_selected(true);
-            break;
+            if (e->modifiers() & Qt::ControlModifier) { copy_selected(true); break; }
+            QWidget::keyPressEvent(e); return;
         case Qt::Key_V:
             if (e->modifiers() & Qt::ControlModifier) paste_here();
             break;

@@ -73,7 +73,55 @@ void FilterBar::setup_ui() {
         )");
         return b;
     };
-    // ↶ = ↶ zakrzywiona strzałka w lewo (CCW), ↷ = ↷ w prawo (CW)
+
+    // ── Suwak rozmiaru miniatur (przed strzałkami obrotu) ─────────────────────
+    auto* btn_minus = new QToolButton(this);
+    btn_minus->setText("−");
+    btn_minus->setFixedSize(22, 22);
+    btn_minus->setFocusPolicy(Qt::NoFocus);
+    btn_minus->setToolTip("Pomniejsz miniatury");
+    btn_minus->setAutoRepeat(true);
+    btn_minus->setAutoRepeatInterval(80);
+    btn_minus->setStyleSheet(R"(
+        QToolButton { font-size:14px; color:#ccc;
+            background:#2b2b2b; border:1px solid #555; border-radius:4px; }
+        QToolButton:hover { background:#383838; border-color:#888; }
+        QToolButton:pressed { background:#1d5fa0; }
+    )");
+
+    m_thumb_slider = new QSlider(Qt::Horizontal, this);
+    m_thumb_slider->setRange(100, 1200);
+    m_thumb_slider->setValue(220);
+    m_thumb_slider->setFixedWidth(130);
+    m_thumb_slider->setToolTip("Rozmiar miniatur");
+    m_thumb_slider->setFocusPolicy(Qt::NoFocus);
+
+    auto* btn_plus = new QToolButton(this);
+    btn_plus->setText("+");
+    btn_plus->setFixedSize(22, 22);
+    btn_plus->setFocusPolicy(Qt::NoFocus);
+    btn_plus->setToolTip("Powiększ miniatury");
+    btn_plus->setAutoRepeat(true);
+    btn_plus->setAutoRepeatInterval(80);
+    btn_plus->setStyleSheet(btn_minus->styleSheet());
+
+    layout->addWidget(btn_minus);
+    layout->addWidget(m_thumb_slider);
+    layout->addWidget(btn_plus);
+    layout->addSpacing(16);
+
+    connect(btn_minus, &QToolButton::clicked, this, [this]() {
+        int step = qMax(10, m_thumb_slider->value() / 10);
+        m_thumb_slider->setValue(m_thumb_slider->value() - step);
+    });
+    connect(btn_plus, &QToolButton::clicked, this, [this]() {
+        int step = qMax(10, m_thumb_slider->value() / 10);
+        m_thumb_slider->setValue(m_thumb_slider->value() + step);
+    });
+    connect(m_thumb_slider, &QSlider::valueChanged,
+            this, [this](int v) { emit thumb_size_changed(v); });
+
+    // ── Strzałki obrotu (po suwaku) ───────────────────────────────────────────
     m_rotate_ccw = make_rot("↶", "Obróć w lewo (-90°)");
     m_rotate_cw  = make_rot("↷", "Obróć w prawo (+90°)");
     layout->addWidget(m_rotate_ccw);
@@ -83,7 +131,6 @@ void FilterBar::setup_ui() {
     connect(m_rotate_ccw, &QToolButton::clicked, this, [this]{ emit rotate_requested(-90); });
     connect(m_rotate_cw,  &QToolButton::clicked, this, [this]{ emit rotate_requested(+90); });
 
-    // ── Szukaj ────────────────────────────────────────────────────────────────
     m_search = new QLineEdit(this);
     m_search->setPlaceholderText("Szukaj nazwy...");
     m_search->setFixedWidth(180);

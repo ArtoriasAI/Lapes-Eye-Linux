@@ -108,7 +108,9 @@ private:
     PreviewPanel*       m_preview_panel     = nullptr;
     FullscreenViewer*   m_fullscreen_viewer = nullptr;
     CompareView*    m_compare_view  = nullptr;   // tryb porównania
-    QDockWidget*    m_preview_dock  = nullptr;   // dock trzymający oba widoki
+    QDockWidget*    m_preview_dock  = nullptr;
+    QDockWidget*    m_left_dock     = nullptr;
+    QDockWidget*    m_meta_dock     = nullptr;
     MetaPanel*      m_meta_panel    = nullptr;
     QFuture<FileMetadata> m_meta_future;
     int             m_meta_gen      = 0;   // generation counter dla async meta

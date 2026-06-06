@@ -181,22 +181,8 @@ void MainWindow::setup_toolbar() {
     tb->addAction(act_rename);
 
     tb->addSeparator();
-    tb->addWidget(new QLabel("  Rozmiar:  ", tb));
 
-    m_zoom_slider = new QSlider(Qt::Horizontal, tb);
-    m_zoom_slider->setRange(100, 1200);
-    m_zoom_slider->setValue(220);
-    m_zoom_slider->setFixedWidth(160);
-    m_zoom_slider->setToolTip("Rozmiar miniatur");
-    tb->addWidget(m_zoom_slider);
-
-    // Po interakcji ze suwakiem — fokus wraca do siatki (nie do suwaka)
-    QObject::connect(m_zoom_slider, &QSlider::sliderReleased, this, [this]() {
-        if (auto* g = current_grid()) g->setFocus();
-    });
-    QObject::connect(m_zoom_slider, &QSlider::valueChanged, this, [this](int val) {
-        if (auto* g = current_grid()) g->set_thumb_size(val);
-    });
+    // Suwak rozmiaru jest w FilterBar — połączenia w setup_panels po stworzeniu m_filter_bar
 
     // KLUCZOWE: toolbar i wszystkie jego przyciski NIE mogą mieć focusu.
     // QToolButton stworzony przez addAction() domyślnie ma Qt::TabFocus —
@@ -225,6 +211,7 @@ void MainWindow::setup_panels() {
     // Lewy dock: panel miejsc
     m_folder_panel = new FolderPanel(this);
     auto* left_dock = new QDockWidget("Foldery", this);
+    m_left_dock = left_dock;
     left_dock->setObjectName("dock_folders");
     left_dock->setWidget(m_folder_panel);
     left_dock->setAllowedAreas(Qt::AllDockWidgetAreas);
@@ -264,6 +251,7 @@ void MainWindow::setup_panels() {
     // Prawy dock dół: metadane
     m_meta_panel = new MetaPanel(this);
     auto* meta_dock = new QDockWidget("Metadane", this);
+    m_meta_dock = meta_dock;
     meta_dock->setObjectName("dock_meta");
     meta_dock->setWidget(m_meta_panel);
     meta_dock->setAllowedAreas(Qt::AllDockWidgetAreas);
@@ -275,6 +263,15 @@ void MainWindow::setup_panels() {
 
     // Dół: filtr
     m_filter_bar = new FilterBar(this);
+    m_zoom_slider = m_filter_bar->thumb_slider();  // suwak jest teraz w FilterBar
+
+    // Połączenia suwaka — teraz m_zoom_slider nie jest nullptr
+    QObject::connect(m_zoom_slider, &QSlider::valueChanged, this, [this](int val) {
+        if (auto* g = current_grid()) g->set_thumb_size(val);
+    });
+    QObject::connect(m_zoom_slider, &QSlider::sliderReleased, this, [this]() {
+        if (auto* g = current_grid()) g->setFocus();
+    });
     auto* filter_dock = new QDockWidget("Filtry", this);
     filter_dock->setObjectName("dock_filter");
     filter_dock->setWidget(m_filter_bar);
@@ -447,6 +444,19 @@ void MainWindow::setup_tabs() {
     bar->installEventFilter(new TabBarFilter(bar, reposition_btn));
     QTimer::singleShot(0, this, [reposition_btn]() { reposition_btn(); });
 
+    // Timer który co 200ms sprawdza czy przycisk jest na właściwej pozycji
+    // Zabezpieczenie przed przypadkami gdy eventy nie dotrą (animacje, resize)
+    auto* reposition_timer = new QTimer(this);
+    reposition_timer->setInterval(200);
+    reposition_timer->callOnTimeout([reposition_btn]() { reposition_btn(); });
+    reposition_timer->start();
+
+    // Repozycjonuj też przy zamknięciu zakładki
+    QObject::connect(m_tabs, &QTabWidget::tabCloseRequested,
+                     this, [reposition_btn](int) {
+                         QTimer::singleShot(0, [reposition_btn]() { reposition_btn(); });
+                     });
+
     QObject::connect(new_tab_btn, &QToolButton::clicked, this, [this, reposition_btn]() {
         action_new_tab();
         QTimer::singleShot(50, this, [reposition_btn]() { reposition_btn(); });
@@ -613,6 +623,17 @@ void MainWindow::setup_menu() {
         }
     });
     tools_menu->addAction("Połącz z Lape",          this, [this]() { m_ipc->connect_to_lape(); });
+
+    auto* view_menu = menuBar()->addMenu("&Widok");
+    view_menu->addAction(m_preview_dock->toggleViewAction());
+    view_menu->addAction(m_left_dock->toggleViewAction());
+    view_menu->addAction(m_meta_dock->toggleViewAction());
+    view_menu->addSeparator();
+    view_menu->addAction("Przywróć układ domyślny", this, [this]() {
+        m_preview_dock->setVisible(true);
+        m_left_dock->setVisible(true);
+        m_meta_dock->setVisible(true);
+    });
 
     menuBar()->addMenu("&Pomoc")->addAction("O Lape's Eye...", this, &MainWindow::action_about);
 }
@@ -1507,6 +1528,20 @@ void MainWindow::keyPressEvent(QKeyEvent* e) {
     bool text_focused = qobject_cast<QLineEdit*>(QApplication::focusWidget()) != nullptr;
 
     if (!text_focused) {
+        // Z — Wybrane (toggle)
+        if (e->key() == Qt::Key_Z && !e->modifiers()) {
+            if (m_meta_panel) {
+                m_meta_panel->set_flag(PickFlag::Pick);
+                e->accept(); return;
+            }
+        }
+        // X — Odrzucone (toggle)
+        if (e->key() == Qt::Key_X && !e->modifiers()) {
+            if (m_meta_panel) {
+                m_meta_panel->set_flag(PickFlag::Reject);
+                e->accept(); return;
+            }
+        }
         // E — otwórz w zewnętrznym edytorze
         if (e->key() == Qt::Key_E && !(e->modifiers() & Qt::ShiftModifier)) {
             auto* g = current_grid();
